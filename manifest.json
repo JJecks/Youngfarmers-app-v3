@@ -1,0 +1,10 @@
+{
+    "name": "Young Farmers Agencies LTD",
+    "short_name": "YFarmers",
+    "description": "Stock Management System for Young Farmers Agencies LTD",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#2e7d32",
+    "theme_color": "#2e7d32",
+    "orientation": "portrait-primary"
+}
