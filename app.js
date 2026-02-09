@@ -2205,6 +2205,8 @@ if (data.creditSales) {
         }
     });
 }
+        });
+    }
 
     // Collect all debt payments
     for (const shop of SHOPS) {
@@ -2254,25 +2256,41 @@ for (const shop of SHOPS) {
 }
 
 // Collect all creditor releases
-for (const shop of SHOPS) {
-    const shopQuery = query(collection(db, 'shops', shop, 'daily'));
-    const snapshot = await getDocs(shopQuery);
+    for (const shop of SHOPS) {
+        const shopQuery = query(collection(db, 'shops', shop, 'daily'));
+        const snapshot = await getDocs(shopQuery);
 
-    snapshot.forEach(docSnapshot => {
-        const data = docSnapshot.data();
-        
-        if (data.creditorReleases) {
-            Object.values(data.creditorReleases).forEach(release => {
-                const creditorName = release.creditorName;
-                const amount = parseFloat(release.total || 0);
-                
-                if (creditorBalances[creditorName]) {
+        snapshot.forEach(docSnapshot => {
+            const data = docSnapshot.data();
+            
+            if (data.creditorReleases) {
+                Object.values(data.creditorReleases).forEach(release => {
+                    const creditorName = release.creditorName;
+                    
+                    // FIXED: Robust calculation for amount
+                    let amount = parseFloat(release.total || 0);
+                    // Fallback for older data or different structure
+                    if (amount === 0 && release.items && Array.isArray(release.items)) {
+                         amount = release.items.reduce((sum, item) => sum + (item.totalPrice || 0), 0);
+                    } else if (amount === 0 && release.bags && release.price) {
+                         // Fallback for very old single-item structure
+                         amount = parseFloat(release.bags) * parseFloat(release.price);
+                    }
+
+                    // Initialize if missing (vital for overspending check)
+                    if (!creditorBalances[creditorName]) {
+                        creditorBalances[creditorName] = { 
+                            prepaid: 0, 
+                            feedsAmount: 0,
+                            phoneNumber: release.phoneNumber || 'Not Provided'
+                        };
+                    }
+                    
                     creditorBalances[creditorName].feedsAmount += amount;
-                }
-            });
-        }
-    });
-}
+                });
+            }
+        });
+    }
 
 // Add overspent creditors to debtorBalances
 Object.entries(creditorBalances).forEach(([name, data]) => {
@@ -2507,12 +2525,13 @@ async function loadCreditorsView() {
     let totalFeedsAmount = 0;
     let totalBalance = 0;
 
-    // ✅ FIXED: Now using correct variable names
+// ✅ FIXED: Now using correct variable names
     Object.entries(creditorBalances).forEach(([name, data]) => {
         const balance = data.prepaid - data.feedsAmount;
         
-        // Only show if there's a balance (positive or negative)
-        if (balance !== 0) {
+        // FIXED: Only show if balance is POSITIVE (Actual Creditors)
+        // Negative balances (Debtors) are now handled in the Debtors View
+        if (balance > 0) {
             totalPrepaid += data.prepaid;
             totalFeedsAmount += data.feedsAmount;
             totalBalance += balance;
