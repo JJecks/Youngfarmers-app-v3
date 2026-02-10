@@ -5909,27 +5909,40 @@ for (const shop of SHOPS) {
     snapshot.forEach(docSnapshot => {
         const data = docSnapshot.data();
         
-        if (data.creditSales) {
+if (data.creditSales) {
             Object.values(data.creditSales).forEach(sale => {
-                const amount =
-                    (parseFloat(sale.bags) * parseFloat(sale.price)) -
-                    parseFloat(sale.discount || 0);
-
-                if (!debtorBalancesPDF[sale.debtorName]) {
-                    debtorBalancesPDF[sale.debtorName] = {
-                        name: sale.debtorName,
-                        phoneNumber: sale.phoneNumber || 'Not Provided',
-                        owed: 0,
-                        paid: 0,
-                        parentClient: sale.parentClient || null
-                    };
+                // Handle both old and new credit sale formats, with NaN protection
+                let amount = 0;
+                
+                if (sale.items && Array.isArray(sale.items)) {
+                    // New format: multi-item credit sales
+                    amount = parseFloat(sale.total || 0);
+                } else {
+                    // Old format: single-item credit sales with NaN protection
+                    const bags = parseFloat(sale.bags || 0);
+                    const price = parseFloat(sale.price || 0);
+                    const discount = parseFloat(sale.discount || 0);
+                    amount = (bags * price) - discount;
                 }
 
-                debtorBalancesPDF[sale.debtorName].owed += amount;
+                // Only process if amount is valid and positive
+                if (!isNaN(amount) && amount > 0) {
+                    if (!debtorBalancesPDF[sale.debtorName]) {
+                        debtorBalancesPDF[sale.debtorName] = {
+                            name: sale.debtorName,
+                            phoneNumber: sale.phoneNumber || 'Not Provided',
+                            owed: 0,
+                            paid: 0,
+                            parentClient: sale.parentClient || null
+                        };
+                    }
 
-                // Ensure parent info is preserved
-                if (sale.parentClient) {
-                    debtorBalancesPDF[sale.debtorName].parentClient = sale.parentClient;
+                    debtorBalancesPDF[sale.debtorName].owed += amount;
+
+                    // Ensure parent info is preserved
+                    if (sale.parentClient) {
+                        debtorBalancesPDF[sale.debtorName].parentClient = sale.parentClient;
+                    }
                 }
             });
         }
@@ -5947,9 +5960,10 @@ for (const shop of SHOPS) {
         if (data.debtPayments) {
             Object.values(data.debtPayments).forEach(payment => {
                 const debtorName = payment.debtorName;
-                const amountPaid = parseFloat(payment.amountPaid);
+                const amountPaid = parseFloat(payment.amountPaid || 0);
 
-                if (debtorBalancesPDF[debtorName]) {
+                // Only process if amount is valid
+                if (!isNaN(amountPaid) && amountPaid > 0 && debtorBalancesPDF[debtorName]) {
                     debtorBalancesPDF[debtorName].paid += amountPaid;
                 }
             });
@@ -5963,7 +5977,9 @@ const ungrouped = [];
 
 Object.values(debtorBalancesPDF).forEach(d => {
     const balance = d.owed - d.paid;
-    if (balance <= 0) return;
+    
+    // Skip if balance is NaN, zero, or negative
+    if (isNaN(balance) || balance <= 0) return;
 
     d.balance = balance;
 
@@ -6097,17 +6113,22 @@ pdf.autoTable({
         snapshot.forEach(docSnapshot => {
             const data = docSnapshot.data();
             
-            if (data.prepayments) {
+if (data.prepayments) {
                 Object.values(data.prepayments).forEach(payment => {
-                    if (!creditorBalancesPDF[payment.clientName]) {
-                        creditorBalancesPDF[payment.clientName] = { 
-                            prepaid: 0, 
-                            feedsTaken: 0, 
-                            feedsAmount: 0,
-                            phoneNumber: payment.phoneNumber || 'Not Provided' 
-                        };
+                    const amountPaid = parseFloat(payment.amountPaid || 0);
+                    
+                    // Only process if amount is valid
+                    if (!isNaN(amountPaid) && amountPaid > 0) {
+                        if (!creditorBalancesPDF[payment.clientName]) {
+                            creditorBalancesPDF[payment.clientName] = { 
+                                prepaid: 0, 
+                                feedsTaken: 0, 
+                                feedsAmount: 0,
+                                phoneNumber: payment.phoneNumber || 'Not Provided' 
+                            };
+                        }
+                        creditorBalancesPDF[payment.clientName].prepaid += amountPaid;
                     }
-                    creditorBalancesPDF[payment.clientName].prepaid += parseFloat(payment.amountPaid);
                 });
             }
         });
@@ -6124,9 +6145,20 @@ pdf.autoTable({
 if (data.creditorReleases) {
     Object.values(data.creditorReleases).forEach(release => {
         const creditorName = release.creditorName;
-        const amount = parseFloat(release.total || 0);  // ✅ Use total!
+        const amount = parseFloat(release.total || 0);
         
-        if (creditorBalancesPDF[creditorName]) {
+        // Initialize creditor if they don't exist (handles edge cases)
+        if (!creditorBalancesPDF[creditorName]) {
+            creditorBalancesPDF[creditorName] = { 
+                prepaid: 0, 
+                feedsTaken: 0, 
+                feedsAmount: 0,
+                phoneNumber: 'Not Provided' 
+            };
+        }
+        
+        // Only add if amount is valid
+        if (!isNaN(amount) && amount >= 0) {
             creditorBalancesPDF[creditorName].feedsAmount += amount;
         }
     });
@@ -6139,11 +6171,11 @@ if (data.creditorReleases) {
     let totalFeedsAmountPDF = 0;
     let totalCreditorBalancePDF = 0;
 
-    Object.entries(creditorBalancesPDF).forEach(([name, data]) => {
+Object.entries(creditorBalancesPDF).forEach(([name, data]) => {
         const balance = data.prepaid - data.feedsAmount;
         
-        // Only show if there's a balance (positive or negative)
-        if (balance !== 0) {
+        // Only show if balance is POSITIVE and valid (they have credit remaining)
+        if (!isNaN(balance) && balance > 0) {
             totalFeedsTakenPDF += data.feedsTaken;
             totalFeedsAmountPDF += data.feedsAmount;
             totalCreditorBalancePDF += balance;
