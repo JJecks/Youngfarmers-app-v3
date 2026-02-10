@@ -2256,41 +2256,32 @@ for (const shop of SHOPS) {
 }
 
 // Collect all creditor releases
-    for (const shop of SHOPS) {
-        const shopQuery = query(collection(db, 'shops', shop, 'daily'));
-        const snapshot = await getDocs(shopQuery);
+for (const shop of SHOPS) {
+    const shopQuery = query(collection(db, 'shops', shop, 'daily'));
+    const snapshot = await getDocs(shopQuery);
 
-        snapshot.forEach(docSnapshot => {
-            const data = docSnapshot.data();
-            
-            if (data.creditorReleases) {
-                Object.values(data.creditorReleases).forEach(release => {
-                    const creditorName = release.creditorName;
-                    
-                    // FIXED: Robust calculation for amount
-                    let amount = parseFloat(release.total || 0);
-                    // Fallback for older data or different structure
-                    if (amount === 0 && release.items && Array.isArray(release.items)) {
-                         amount = release.items.reduce((sum, item) => sum + (item.totalPrice || 0), 0);
-                    } else if (amount === 0 && release.bags && release.price) {
-                         // Fallback for very old single-item structure
-                         amount = parseFloat(release.bags) * parseFloat(release.price);
-                    }
-
-                    // Initialize if missing (vital for overspending check)
-                    if (!creditorBalances[creditorName]) {
-                        creditorBalances[creditorName] = { 
-                            prepaid: 0, 
-                            feedsAmount: 0,
-                            phoneNumber: release.phoneNumber || 'Not Provided'
-                        };
-                    }
-                    
-                    creditorBalances[creditorName].feedsAmount += amount;
-                });
-            }
-        });
-    }
+    snapshot.forEach(docSnapshot => {
+        const data = docSnapshot.data();
+        
+        if (data.creditorReleases) {
+            Object.values(data.creditorReleases).forEach(release => {
+                const creditorName = release.creditorName;
+                const amount = parseFloat(release.total || 0);
+                
+                // Initialize creditor if they don't exist (handles edge cases)
+                if (!creditorBalances[creditorName]) {
+                    creditorBalances[creditorName] = { 
+                        prepaid: 0, 
+                        feedsAmount: 0,
+                        phoneNumber: 'Not Provided'
+                    };
+                }
+                
+                creditorBalances[creditorName].feedsAmount += amount;
+            });
+        }
+    });
+}
 
 // Add overspent creditors to debtorBalances
 Object.entries(creditorBalances).forEach(([name, data]) => {
@@ -2525,12 +2516,11 @@ async function loadCreditorsView() {
     let totalFeedsAmount = 0;
     let totalBalance = 0;
 
-// ✅ FIXED: Now using correct variable names
+    // ✅ FIXED: Now using correct variable names
     Object.entries(creditorBalances).forEach(([name, data]) => {
         const balance = data.prepaid - data.feedsAmount;
         
-        // FIXED: Only show if balance is POSITIVE (Actual Creditors)
-        // Negative balances (Debtors) are now handled in the Debtors View
+        // Only show if balance is POSITIVE (they have credit remaining)
         if (balance > 0) {
             totalPrepaid += data.prepaid;
             totalFeedsAmount += data.feedsAmount;
@@ -6245,14 +6235,29 @@ if (data.creditorReleases) {
         snapshot.forEach(docSnapshot => {
             const data = docSnapshot.data();
             
-            if (data.creditSales) {
+if (data.creditSales) {
                 Object.values(data.creditSales).forEach(sale => {
-                    const amount = (parseFloat(sale.bags) * parseFloat(sale.price)) - parseFloat(sale.discount || 0);
+                    // Handle both old and new credit sale formats, with NaN protection
+                    let amount = 0;
                     
-                    if (!debtorBalances[sale.debtorName]) {
-                        debtorBalances[sale.debtorName] = { owed: 0, paid: 0 };
+                    if (sale.items && Array.isArray(sale.items)) {
+                        // New format: multi-item credit sales
+                        amount = parseFloat(sale.total || 0);
+                    } else {
+                        // Old format: single-item credit sales with NaN protection
+                        const bags = parseFloat(sale.bags || 0);
+                        const price = parseFloat(sale.price || 0);
+                        const discount = parseFloat(sale.discount || 0);
+                        amount = (bags * price) - discount;
                     }
-                    debtorBalances[sale.debtorName].owed += amount;
+                    
+                    // Only add if amount is a valid number
+                    if (!isNaN(amount) && amount > 0) {
+                        if (!debtorBalances[sale.debtorName]) {
+                            debtorBalances[sale.debtorName] = { owed: 0, paid: 0 };
+                        }
+                        debtorBalances[sale.debtorName].owed += amount;
+                    }
                 });
             }
         });
@@ -6269,10 +6274,13 @@ if (data.creditorReleases) {
             if (data.debtPayments) {
                 Object.values(data.debtPayments).forEach(payment => {
                     const debtorName = payment.debtorName;
-                    const amountPaid = parseFloat(payment.amountPaid);
+                    const amountPaid = parseFloat(payment.amountPaid || 0);
                     
-                    if (debtorBalances[debtorName]) {
-                        debtorBalances[debtorName].paid += amountPaid;
+                    // Only add if amount is valid
+                    if (!isNaN(amountPaid) && amountPaid > 0) {
+                        if (debtorBalances[debtorName]) {
+                            debtorBalances[debtorName].paid += amountPaid;
+                        }
                     }
                 });
             }
@@ -6305,10 +6313,15 @@ if (data.creditorReleases) {
             
             if (data.prepayments) {
                 Object.values(data.prepayments).forEach(payment => {
-                    if (!creditorBalancesDoc2[payment.clientName]) {
-                        creditorBalancesDoc2[payment.clientName] = { prepaid: 0, feedsTaken: 0 };
+                    const amountPaid = parseFloat(payment.amountPaid || 0);
+                    
+                    // Only add if amount is valid
+                    if (!isNaN(amountPaid) && amountPaid > 0) {
+                        if (!creditorBalancesDoc2[payment.clientName]) {
+                            creditorBalancesDoc2[payment.clientName] = { prepaid: 0, feedsTaken: 0 };
+                        }
+                        creditorBalancesDoc2[payment.clientName].prepaid += amountPaid;
                     }
-                    creditorBalancesDoc2[payment.clientName].prepaid += parseFloat(payment.amountPaid);
                 });
             }
         });
@@ -6325,21 +6338,29 @@ if (data.creditorReleases) {
 if (data.creditorReleases) {
     Object.values(data.creditorReleases).forEach(release => {
         const creditorName = release.creditorName;
-        const amount = parseFloat(release.total || 0);  // ✅ Use total!
+        const amount = parseFloat(release.total || 0);
         
-        if (creditorBalancesDoc2[creditorName]) {
+        // Initialize creditor if they don't exist (handles edge cases)
+        if (!creditorBalancesDoc2[creditorName]) {
+            creditorBalancesDoc2[creditorName] = { prepaid: 0, feedsTaken: 0 };
+        }
+        
+        // Only add if amount is valid
+        if (!isNaN(amount) && amount >= 0) {
             creditorBalancesDoc2[creditorName].feedsTaken += amount;
         }
     });
 }
+
         });
     }
 
-    // Calculate total creditors balance
+    // Calculate total creditors balance (only count positive balances)
     let creditorsBalanceDoc2 = 0;
     Object.values(creditorBalancesDoc2).forEach(data => {
         const balance = data.prepaid - data.feedsTaken;
-        if (balance !== 0) {
+        // Only count positive balances (actual creditors)
+        if (!isNaN(balance) && balance > 0) {
             creditorsBalanceDoc2 += balance;
         }
     });
